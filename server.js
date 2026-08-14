@@ -18,6 +18,7 @@ const IQ_RATE = 2_400_000;
 const MAX_SESSIONS = Math.max(1, Math.min(8, Number(process.env.MAX_SESSIONS) || 2));
 const MAX_CONNECTIONS = Math.max(MAX_SESSIONS, Math.min(64, Number(process.env.MAX_CONNECTIONS) || 16));
 const EXTRA_ALLOWED_ORIGINS = new Set(String(process.env.ALLOWED_ORIGINS || "").split(",").map((value) => normalizeOrigin(value.trim())).filter(Boolean));
+// these settings belong to the physical dongle so listeners cannot own them separately
 const HARDWARE_KEYS = ["gain", "ppm", "biasTee", "directSampling", "device"];
 const commandCache = new Map();
 
@@ -56,6 +57,7 @@ function requestOrigin(request) {
 }
 
 function isAllowedWebSocketOrigin(request) {
+  // only accept browsers that opened bettersdr itself or an origin the owner allowed
   const origin = normalizeOrigin(request.headers.origin);
   return Boolean(origin && (origin === requestOrigin(request) || EXTRA_ALLOWED_ORIGINS.has(origin)));
 }
@@ -146,6 +148,7 @@ class RadioEngine {
   }
 
   captureBounds() {
+    // keep a little space away from the noisy edges of the captured iq slice
     return {
       min: Math.max(100_000, Math.round(this.centerFrequency - IQ_RATE * 0.44)),
       max: Math.min(1_766_000_000, Math.round(this.centerFrequency + IQ_RATE * 0.44)),
@@ -205,6 +208,7 @@ class RadioEngine {
   }
 
   register(socket, operator) {
+    // every browser gets private tuning and audio state even though the iq source is shared
     const initialFrequency = this.activeSessions().length ? this.centerFrequency : DEFAULTS.frequency;
     const session = new ReceiverSession(socket, initialFrequency, operator);
     this.sessions.set(session.id, session);
@@ -302,6 +306,7 @@ class RadioEngine {
 
     const outsideCapture = !this.sessionFitsCapture(next);
     if (outsideCapture && activeCount > 1) {
+      // moving the dongle here would interrupt every other listener
       next.frequency = previous.frequency;
       session.lastError = "that station is outside the current 2.4 MHz capture window while other listeners are active.";
     }
@@ -384,6 +389,7 @@ class RadioEngine {
     let heardIq = false;
 
     worker.on("message", (message) => {
+      // an old worker may still finish a callback after a fast retune
       if (this.worker !== worker) return;
       if (message.type === "audio") {
         const session = this.sessions.get(message.sessionId);
@@ -403,6 +409,7 @@ class RadioEngine {
     });
 
     child.stdout.on("data", (chunk) => {
+      // ignore data from a process that has already been replaced
       if (this.worker !== worker) return;
       if (!heardIq) {
         heardIq = true;
@@ -475,8 +482,7 @@ class RadioEngine {
   }
 
   scheduleRestart(delay, pageDirection = 0, requestedCenter = null) {
-    // Protect both device restarts and capture-page restarts from a closely
-    // following config message cancelling the debounce before it fires.
+    // keep a following ui update from cancelling a retune that is already waiting
     this.pendingHardwareRestart = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = setTimeout(() => {
@@ -488,8 +494,7 @@ class RadioEngine {
       }
       if (pageDirection) {
         const session = active[0];
-        // Page ahead of upward tuning (and behind downward tuning) so the
-        // selected channel enters the next capture from the expected edge.
+        // place the next capture ahead or behind so navigation keeps its direction
         this.centerFrequency = this.captureCenterFor(session.config, requestedCenter, pageDirection);
       }
       this.pendingHardwareRestart = false;
@@ -498,6 +503,7 @@ class RadioEngine {
   }
 
   enqueue(task) {
+    // run hardware changes one at a time so stop and start calls never overlap
     this.operation = this.operation.then(task, task).catch((error) => {
       this.hardwareState = "error";
       this.hardwareError = error instanceof Error ? error.message : String(error);
@@ -538,6 +544,7 @@ class RadioEngine {
     const child = this.process;
     this.process = null;
     const exited = new Promise((resolve) => child.once("exit", resolve));
+    // give rtl_sdr a chance to release usb cleanly before forcing it down
     child.kill("SIGTERM");
     await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 700))]);
     if (child.exitCode === null && child.signalCode === null) {

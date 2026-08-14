@@ -7,6 +7,7 @@ const FFT_INTERVAL_SAMPLES = Math.floor(IQ_RATE / 18);
 const AUDIO_CHUNK_SAMPLES = 960;
 const DEFAULT_CONFIG = { mode: "wbfm", bandwidth: 180_000, deemphasis: "50", squelch: 0, frequencyOffset: 0 };
 
+// spectrum state is shared while demodulator state stays private to each listener
 const sessions = new Map();
 let dcI = 0;
 let dcQ = 0;
@@ -20,6 +21,7 @@ const fftQ = new Float64Array(FFT_SIZE);
 const windowI = new Float64Array(FFT_SIZE);
 const windowQ = new Float64Array(FFT_SIZE);
 const hann = new Float64Array(FFT_SIZE);
+// the window softens fft edge jumps so stations do not smear across the display
 for (let i = 0; i < FFT_SIZE; i += 1) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1));
 
 function makeSession(id, incoming = {}) {
@@ -73,6 +75,7 @@ function resetSharedDsp() {
 }
 
 function updateNco(session, offset) {
+  // this oscillator moves one listener's station to the middle without retuning the dongle
   session.ncoOffset = Number(offset) || 0;
   const angle = (2 * Math.PI * session.ncoOffset) / IQ_RATE;
   session.ncoStepCos = Math.cos(angle);
@@ -80,6 +83,7 @@ function updateNco(session, offset) {
 }
 
 function fft(real, imag) {
+  // a small in place radix two fft keeps spectrum work out of the main server thread
   const n = real.length;
   for (let i = 1, j = 0; i < n; i += 1) {
     let bit = n >> 1;
@@ -133,6 +137,7 @@ function emitSpectrum() {
     sortable[i] = value;
   }
   sortable.sort();
+  // follow the noise floor slowly so the waterfall stays useful as conditions change
   const measuredFloor = sortable[Math.floor(FFT_SIZE * 0.28)];
   spectrumFloor += (measuredFloor - spectrumFloor) * 0.08;
   const low = spectrumFloor + 2;
@@ -143,6 +148,7 @@ function emitSpectrum() {
 }
 
 function pushAudio(session, value) {
+  // remove audio dc before squelch and conversion to little endian pcm
   session.audioLastOutput = value - session.audioLastInput + 0.995 * session.audioLastOutput;
   session.audioLastInput = value;
   let output = session.audioLastOutput;
@@ -171,6 +177,7 @@ function resampleAudio(session, value, inputRate) {
 
 function demodulate(session, i, q, rate) {
   const config = session.config;
+  // two gentle low pass stages shape the selected channel before demodulation
   if (session.channelFilterRate !== rate || session.channelFilterBandwidth !== config.bandwidth) {
     const cutoff = Math.min(rate * 0.45, Math.max(50, Number(config.bandwidth) / 2));
     session.channelAlpha = 1 - Math.exp((-2 * Math.PI * cutoff) / rate);
@@ -227,6 +234,7 @@ function processSessionSample(session, i, q) {
     session.ncoCos = nextCos;
     session.ncoSamples += 1;
     if ((session.ncoSamples & 4095) === 0) {
+      // floating point error slowly changes oscillator size so tidy it up now and then
       const magnitude = Math.hypot(session.ncoCos, session.ncoSin) || 1;
       session.ncoCos /= magnitude;
       session.ncoSin /= magnitude;
@@ -251,6 +259,7 @@ function processIq(arrayBuffer) {
   for (let p = 0; p + 1 < bytes.length; p += 2) {
     const rawI = (bytes[p] - 127.5) / 128;
     const rawQ = (bytes[p + 1] - 127.5) / 128;
+    // rtl samples have a small center spike so track it slowly and remove it
     dcI += (rawI - dcI) * 0.00015;
     dcQ += (rawQ - dcQ) * 0.00015;
     const i = rawI - dcI;
@@ -266,6 +275,7 @@ function processIq(arrayBuffer) {
       samplesUntilFft = FFT_INTERVAL_SAMPLES;
     }
 
+    // the same cleaned sample feeds every private tuner inside this capture
     for (const session of sessions.values()) processSessionSample(session, i, q);
   }
 }

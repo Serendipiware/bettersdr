@@ -598,8 +598,7 @@
         });
       }
       const useFallback = isAppleMobileBrowser() || !audioContext.audioWorklet;
-      // WebKit requires the output graph to be created during the actual tap,
-      // before an awaited module load can consume the user activation.
+      // mobile safari needs the output graph to be created during the actual tap
       if (useFallback && !playerNode) createFallbackPlayer();
       if (audioContext.state !== "running") await audioContext.resume();
       if (useFallback) return;
@@ -914,8 +913,7 @@
       }
       if (frequencyEditing && !commitFrequency(true)) return;
       const audioStart = ensureAudio();
-      // Start the private receiver session immediately from the same tap. Do
-      // not make mobile Safari wait for asynchronous audio setup first.
+      // start the receiver from the same tap so mobile safari keeps audio unlocked
       send("start", { config });
       try {
         await audioStart;
@@ -1218,6 +1216,7 @@
       const current = Math.max(0, spans.indexOf(displaySpan));
       const next = Math.max(0, Math.min(spans.length - 1, current + direction));
       if (!spans.length || spans[next] === displaySpan) return false;
+      // keep the selected station in the same screen position while the view changes
       const selectedOffset = (Number(config.frequency) - viewCenter) / displaySpan;
       displaySpan = spans[next];
       requestedViewCenter = Number(config.frequency) - selectedOffset * displaySpan;
@@ -1253,8 +1252,7 @@
       const tunedX = tunedPosition(width);
       const centerDistance = Math.abs(tunedX - x);
       const edgeDistance = Math.min(...bandwidthEdges(width).map(edge => Math.abs(edge - x)));
-      // Narrow filters can put both edge hit areas over the tuning line. Let the
-      // closest visible guide win so the center always remains draggable.
+      // narrow filters overlap the center so the closest visible guide wins
       return edgeDistance <= 12 && edgeDistance < centerDistance ? "resize" : "tune";
     }
     function isInsideBandwidth(x, width) {
