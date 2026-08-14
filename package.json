@@ -1,0 +1,21 @@
+{
+  "name": "bettersdr",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "A friendly local web receiver for RTL-SDR dongles",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check dsp-worker.js && node --check test/session-isolation.js",
+    "test": "node test/session-isolation.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  }
+}

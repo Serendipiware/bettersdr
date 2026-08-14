@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+
+const chunk = Buffer.alloc(32_768, 127);
+const timer = setInterval(() => {
+  if (!process.stdout.write(chunk)) process.stdout.once("drain", () => {});
+}, 7);
+
+function stop() {
+  clearInterval(timer);
+  process.exit(0);
+}
+
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
